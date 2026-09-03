@@ -1,0 +1,4 @@
+discord.py[voice]
+pocket-tts
+python-dotenv
+numpy
