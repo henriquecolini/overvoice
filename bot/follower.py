@@ -14,7 +14,7 @@ from pathlib import Path
 import discord
 
 from .settings import SettingsStore
-from .text_cleanup import sanitize_message
+from .text_cleanup import sanitize_message, split_sentences
 from .tts import TTSCatalog
 
 logger = logging.getLogger(__name__)
@@ -112,57 +112,71 @@ class VoiceFollower:
             await guild.voice_client.disconnect()
 
     async def _playback_loop(self, guild: discord.Guild, session: _GuildSession) -> None:
-        loop = asyncio.get_running_loop()
         try:
             while True:
                 text = await session.queue.get()
                 settings = self._settings.get(guild.id)
-                try:
-                    wav_bytes = await loop.run_in_executor(
-                        None, self._tts.synthesize, settings.voice, text
-                    )
-                except Exception:
-                    logger.exception("TTS synthesis failed for message: %r", text)
-                    continue
+                chunks = split_sentences(text)
 
-                if self._debug_dir:
-                    self._save_debug_clip(text, wav_bytes)
+                async for chunk, wav_bytes in self._synthesize_pipelined(settings.voice, chunks):
+                    if self._debug_dir:
+                        self._save_debug_clip(chunk, wav_bytes)
 
-                voice_client = guild.voice_client
-                if voice_client is None:
-                    continue
+                    voice_client = guild.voice_client
+                    if voice_client is None:
+                        break  # bot got disconnected mid-message; drop the rest
 
-                try:
-                    with wave.open(io.BytesIO(wav_bytes)) as wav_file:
-                        expected_duration = wav_file.getnframes() / wav_file.getframerate()
-
-                    done = asyncio.Event()
-                    start_time = time.monotonic()
-
-                    def _after_playback(error: Exception | None) -> None:
-                        elapsed = time.monotonic() - start_time
-                        if error:
-                            logger.error("Playback error after %.2fs: %s", elapsed, error)
-                        elif elapsed < expected_duration - 0.5:
-                            logger.warning(
-                                "Playback for %r stopped early: expected %.2fs, played %.2fs",
-                                text, expected_duration, elapsed,
-                            )
-                        else:
-                            logger.info("Played %r (%.2fs)", text, elapsed)
-                        loop.call_soon_threadsafe(done.set)
-
-                    voice_client.play(
-                        discord.FFmpegPCMAudio(io.BytesIO(wav_bytes), pipe=True),
-                        after=_after_playback,
-                    )
-                    await done.wait()
-                except Exception:
-                    # A single message must never permanently kill this session's
-                    # playback loop -- log it and keep going with the next one.
-                    logger.exception("Playback failed for message: %r", text)
+                    await self._play(voice_client, chunk, wav_bytes)
         except asyncio.CancelledError:
             pass
+
+    async def _synthesize_pipelined(self, voice: str, chunks: list[str]):
+        """Synthesizes each chunk while the previous one is being played,
+        so a long message starts speaking after its first sentence instead
+        of waiting for the whole thing to render."""
+        loop = asyncio.get_running_loop()
+        pending = loop.run_in_executor(None, self._tts.synthesize, voice, chunks[0])
+        for i, chunk in enumerate(chunks):
+            current = pending
+            if i + 1 < len(chunks):
+                pending = loop.run_in_executor(None, self._tts.synthesize, voice, chunks[i + 1])
+            try:
+                wav_bytes = await current
+            except Exception:
+                logger.exception("TTS synthesis failed for message chunk: %r", chunk)
+                continue
+            yield chunk, wav_bytes
+
+    async def _play(self, voice_client: discord.VoiceClient, text: str, wav_bytes: bytes) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            with wave.open(io.BytesIO(wav_bytes)) as wav_file:
+                expected_duration = wav_file.getnframes() / wav_file.getframerate()
+
+            done = asyncio.Event()
+            start_time = time.monotonic()
+
+            def _after_playback(error: Exception | None) -> None:
+                elapsed = time.monotonic() - start_time
+                if error:
+                    logger.error("Playback error after %.2fs: %s", elapsed, error)
+                elif elapsed < expected_duration - 0.5:
+                    logger.warning(
+                        "Playback for %r stopped early: expected %.2fs, played %.2fs",
+                        text, expected_duration, elapsed,
+                    )
+                else:
+                    logger.info("Played %r (%.2fs)", text, elapsed)
+                loop.call_soon_threadsafe(done.set)
+
+            voice_client.play(
+                discord.FFmpegPCMAudio(io.BytesIO(wav_bytes), pipe=True), after=_after_playback
+            )
+            await done.wait()
+        except Exception:
+            # A single chunk must never permanently kill this session's
+            # playback loop -- log it and keep going with the next one.
+            logger.exception("Playback failed for message chunk: %r", text)
 
     def _save_debug_clip(self, text: str, wav_bytes: bytes) -> None:
         try:
