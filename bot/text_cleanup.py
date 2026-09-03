@@ -13,7 +13,6 @@ _CUSTOM_EMOJI = re.compile(r"<a?:(\w+):\d+>")
 _URL = re.compile(r"https?://\S+")
 _MARKDOWN_CHARS = re.compile(r"(\*\*|\*|__|_|~~|`{1,3}|\|\||^>\s?)", re.MULTILINE)
 _WHITESPACE = re.compile(r"\s+")
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?…])\s+")
 
 
 def sanitize_message(message: discord.Message, max_chars: int) -> str:
@@ -29,13 +28,6 @@ def sanitize_message(message: discord.Message, max_chars: int) -> str:
     text = _WHITESPACE.sub(" ", text).strip()
 
     return text[:max_chars]
-
-
-def split_sentences(text: str) -> list[str]:
-    """Splits text into sentence-sized chunks so the caller can start
-    playing the first one while later ones are still being synthesized."""
-    parts = [p.strip() for p in _SENTENCE_BOUNDARY.split(text) if p.strip()]
-    return parts or [text]
 
 
 def _resolve_user(guild: discord.Guild | None, user_id: int) -> str:
