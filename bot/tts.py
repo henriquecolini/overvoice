@@ -58,15 +58,6 @@ VOICES = (
     "pf_dora", "pm_alex", "pm_santa",
 )
 
-# Discord's voice server needs a brief moment to process the "speaking"
-# state transition before it starts relaying audio, which otherwise eats
-# the first fraction of a second of every clip (audible as a clipped word
-# on short messages). Padding with silence gives that warm-up something
-# harmless to consume instead of real speech.
-_LEADING_SILENCE_SECONDS = 0.35
-_TRAILING_SILENCE_SECONDS = 0.15
-
-
 def language_for_voice(voice: str) -> str:
     return _LANGUAGE_BY_PREFIX[voice[0]]
 
@@ -83,10 +74,6 @@ class TTSCatalog:
         """Blocking call: renders text to 16-bit PCM WAV bytes."""
         samples, sample_rate = self._kokoro.create(text, voice=voice, lang=language_for_voice(voice))
         pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
-
-        lead_silence = np.zeros(int(_LEADING_SILENCE_SECONDS * sample_rate), dtype=np.int16)
-        trail_silence = np.zeros(int(_TRAILING_SILENCE_SECONDS * sample_rate), dtype=np.int16)
-        pcm = np.concatenate([lead_silence, pcm, trail_silence])
 
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as wav_file:

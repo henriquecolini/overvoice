@@ -26,7 +26,11 @@ _PREVIEW_TEXT = {
 
 
 class OvervoiceGroup(app_commands.Group):
-    """The `/overvoice` command group, restricted to server admins."""
+    """The `/overvoice` command group.
+
+    Configuration subcommands (track/untrack/voice/preview/status) require
+    the Moderate Members permission; `say` is open to everyone.
+    """
 
     def __init__(
         self, settings: SettingsStore, tts: TTSCatalog, follower: VoiceFollower, max_chars: int
@@ -35,7 +39,6 @@ class OvervoiceGroup(app_commands.Group):
             name="overvoice",
             description="Configure Overvoice for this server",
             guild_only=True,
-            default_permissions=discord.Permissions(administrator=True),
         )
         self._settings = settings
         self._tts = tts
@@ -44,18 +47,24 @@ class OvervoiceGroup(app_commands.Group):
 
     @app_commands.command(description="Follow this user into voice channels and read their messages aloud")
     async def track(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        if not await _require_moderator(interaction):
+            return
         self._settings.set_tracked_user(interaction.guild_id, user.id)
         await self._follower.resync_guild(interaction.guild)
         await interaction.response.send_message(f"Now following {user.mention}.", ephemeral=True)
 
     @app_commands.command(description="Stop following anyone and leave voice")
     async def untrack(self, interaction: discord.Interaction) -> None:
+        if not await _require_moderator(interaction):
+            return
         self._settings.set_tracked_user(interaction.guild_id, None)
         await self._follower.resync_guild(interaction.guild)
         await interaction.response.send_message("Stopped following anyone.", ephemeral=True)
 
     @app_commands.command(description="Set the TTS voice used for this server")
     async def voice(self, interaction: discord.Interaction, voice: str) -> None:
+        if not await _require_moderator(interaction):
+            return
         if voice not in VOICES:
             await interaction.response.send_message(
                 f"Unknown voice {voice!r}. Use the autocomplete list.", ephemeral=True
@@ -76,6 +85,8 @@ class OvervoiceGroup(app_commands.Group):
     async def preview(
         self, interaction: discord.Interaction, voice: str, text: str | None = None
     ) -> None:
+        if not await _require_moderator(interaction):
+            return
         if voice not in VOICES:
             await interaction.response.send_message(
                 f"Unknown voice {voice!r}. Use the autocomplete list.", ephemeral=True
@@ -111,6 +122,8 @@ class OvervoiceGroup(app_commands.Group):
 
     @app_commands.command(description="Show this server's current Overvoice settings")
     async def status(self, interaction: discord.Interaction) -> None:
+        if not await _require_moderator(interaction):
+            return
         settings = self._settings.get(interaction.guild_id)
         tracked = f"<@{settings.tracked_user_id}>" if settings.tracked_user_id else "nobody"
         await interaction.response.send_message(
@@ -122,3 +135,12 @@ class OvervoiceGroup(app_commands.Group):
 def _matching_voice_choices(current: str) -> list[app_commands.Choice[str]]:
     matches = [v for v in VOICES if current.lower() in v.lower()]
     return [app_commands.Choice(name=v, value=v) for v in matches[:25]]
+
+
+async def _require_moderator(interaction: discord.Interaction) -> bool:
+    if interaction.user.guild_permissions.moderate_members:
+        return True
+    await interaction.response.send_message(
+        "You need the **Moderate Members** permission to use this command.", ephemeral=True
+    )
+    return False
