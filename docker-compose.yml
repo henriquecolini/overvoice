@@ -3,13 +3,10 @@ services:
     build: .
     env_file: .env
     volumes:
-      - hf-cache:/root/.cache/huggingface
+      - ./models:/app/models:Z
       - ./debug-audio:/app/debug-audio:Z
       - ./data:/app/data:Z
     restart: unless-stopped
     # Host networking avoids Docker's NAT/userland-proxy for the voice UDP
     # stream, which otherwise causes jitter/dropped packets mid-playback.
     network_mode: host
-
-volumes:
-  hf-cache:

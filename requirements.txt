@@ -1,4 +1,4 @@
 discord.py[voice]
-pocket-tts
+kokoro-onnx
 python-dotenv
 numpy

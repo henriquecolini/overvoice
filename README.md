@@ -1,7 +1,7 @@
 # Overvoice
 
 A Discord bot that follows a chosen user into voice channels and speaks
-their text messages aloud, using [Pocket TTS](https://kyutai.org/blog/2026-01-13-pocket-tts/)
+their text messages aloud, using [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)
 for fast, fully local, CPU-only speech synthesis. No "User says:" framing —
 just the message, spoken.
 
@@ -37,8 +37,8 @@ Fill in `DISCORD_BOT_TOKEN`. Everything else is optional (see below).
 docker compose up --build
 ```
 
-The first start downloads the Pocket TTS model weights into a cached Docker
-volume (`hf-cache`), so subsequent restarts start instantly and work offline.
+The first start downloads the Kokoro model weights into `./models`, so
+subsequent restarts start instantly and work offline.
 
 ### 4. Configure per server
 
@@ -46,10 +46,10 @@ Once the bot is in your server, an admin runs:
 
 - `/overvoice track user:@someone` — follow this person into voice channels and read their messages
 - `/overvoice untrack` — stop following anyone
-- `/overvoice language language:portuguese` — set the TTS language for this server
-- `/overvoice voice voice:vera` — set the TTS voice (autocompletes as you type)
-- `/overvoice preview language:portuguese voice:vera` — post a short sample clip so everyone can hear a voice before picking it
-- `/overvoice status` — show the current tracked user, language, and voice
+- `/overvoice voice voice:pf_dora` — set the TTS voice (autocompletes as you type; see `bot/tts.py`'s `VOICES` list for every option — language is implied by the voice, e.g. `pf_dora` speaks Brazilian Portuguese, `af_bella` speaks American English)
+- `/overvoice preview voice:pf_dora` — post a short sample clip so everyone can hear a voice before picking it
+- `/overvoice say text:hello there` — post a spoken clip of arbitrary text using the server's current voice
+- `/overvoice status` — show the current tracked user and voice
 
 Changes apply immediately — no restart needed.
 
@@ -58,20 +58,20 @@ Changes apply immediately — no restart needed.
 | Variable | Default | Description |
 |---|---|---|
 | `DISCORD_BOT_TOKEN` | — | Bot token from the Developer Portal |
-| `TTS_DEFAULT_LANGUAGE` | `english` | Language for servers that haven't run `/overvoice language` yet |
-| `TTS_DEFAULT_VOICE` | `alba` | Voice for servers that haven't run `/overvoice voice` yet |
+| `TTS_DEFAULT_VOICE` | `af_heart` | Voice for servers that haven't run `/overvoice voice` yet |
 | `TTS_MAX_CHARS` | `500` | Messages longer than this are truncated before being spoken |
 | `TTS_DEBUG_DIR` | unset | If set, saves every generated clip as a `.wav` file there (see `docker-compose.yml`'s `./debug-audio` mount) |
 | `SETTINGS_PATH` | `data/guild_settings.json` | Where per-server settings are persisted (see `docker-compose.yml`'s `./data` mount) |
+| `KOKORO_MODEL_DIR` | `models/kokoro` | Where Kokoro's model weights are downloaded to (see `docker-compose.yml`'s `./models` mount) |
 
 ## Local development (without Docker)
 
-Requires Python 3.10+ and `ffmpeg` on your system.
+Requires Python 3.10+, `ffmpeg`, and `espeak-ng` on your system (`dnf install espeak-ng` / `apt install espeak-ng`).
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
 cp .env.example .env  # fill in DISCORD_BOT_TOKEN
 python -m bot.main
 ```
@@ -79,3 +79,12 @@ python -m bot.main
 Iterate against the venv directly for fast turnaround (e.g. calling
 `TTSCatalog.synthesize(...)` from a one-off script to inspect generated
 audio) — reserve the Docker build for verifying the container itself.
+
+## Why Kokoro instead of Pocket TTS
+
+The bot originally used [Pocket TTS](https://kyutai.org/blog/2026-01-13-pocket-tts/),
+which sounds great but is a flow/transformer model with an EOS detector
+that decides when speech ends — and that detector can misfire on short,
+context-free chat messages ("oi", "kkkkk", single-word reactions), cutting
+them short. Kokoro is non-autoregressive, so short and long utterances are
+equally stable. That version is preserved on the `pocket-tts` branch.

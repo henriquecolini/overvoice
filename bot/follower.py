@@ -119,7 +119,7 @@ class VoiceFollower:
                 settings = self._settings.get(guild.id)
                 try:
                     wav_bytes = await loop.run_in_executor(
-                        None, self._tts.synthesize, settings.language, settings.voice, text
+                        None, self._tts.synthesize, settings.voice, text
                     )
                 except Exception:
                     logger.exception("TTS synthesis failed for message: %r", text)

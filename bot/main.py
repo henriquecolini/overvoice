@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     config = load_config()
 
-    settings = SettingsStore(
-        config.settings_path, config.tts_default_language, config.tts_default_voice
-    )
-    tts = TTSCatalog()
+    settings = SettingsStore(config.settings_path, config.tts_default_voice)
+
+    logger.info("Loading Kokoro model...")
+    tts = TTSCatalog(config.kokoro_model_dir)
     follower = VoiceFollower(settings, tts, config.tts_max_chars, config.tts_debug_dir)
 
     intents = discord.Intents.default()
