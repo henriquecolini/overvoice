@@ -1,4 +1,4 @@
-"""Follows each guild's configured tracked user into voice channels and
+"""Follows each guild's configured tracked users into voice channels and
 speaks their messages, sent in that channel's text chat, aloud."""
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class _GuildSession:
     def __init__(self) -> None:
-        self.queue: asyncio.Queue[str] = asyncio.Queue()
+        self.queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()  # (voice, text)
         self.task: asyncio.Task | None = None
 
 
@@ -55,8 +55,7 @@ class VoiceFollower:
         before: discord.VoiceState,
         after: discord.VoiceState,
     ) -> None:
-        tracked_user_id = self._settings.get(member.guild.id).tracked_user_id
-        if member.id != tracked_user_id:
+        if member.id not in self._settings.get(member.guild.id).tracked_users:
             return
         await self.resync_guild(member.guild)
 
@@ -65,7 +64,8 @@ class VoiceFollower:
             return
 
         settings = self._settings.get(message.guild.id)
-        if message.author.id != settings.tracked_user_id:
+        voice = settings.tracked_users.get(message.author.id)
+        if voice is None:
             return
 
         voice_client = message.guild.voice_client
@@ -78,22 +78,38 @@ class VoiceFollower:
 
         session = self._sessions.get(message.guild.id)
         if session:
-            session.queue.put_nowait(text)
+            session.queue.put_nowait((voice, text))
 
     async def resync_guild(self, guild: discord.Guild) -> None:
         """Makes the bot's voice connection for this guild match its
-        configured tracked user's current voice state. Called on startup,
-        when the bot joins a new guild, on voice state changes, and
-        whenever an admin command changes a guild's settings."""
-        tracked_user_id = self._settings.get(guild.id).tracked_user_id
-        member = guild.get_member(tracked_user_id) if tracked_user_id else None
-        target_channel = member.voice.channel if member and member.voice else None
+        tracked users' current voice states. Called on startup, when the
+        bot joins a new guild, on voice state changes, and whenever an
+        admin command changes a guild's settings.
+
+        The bot can only be in one voice channel per guild at a time, so
+        when tracked users are spread across channels it stays wherever it
+        already is as long as a tracked user is still there, and otherwise
+        joins whichever channel currently has the most of them."""
+        tracked_user_ids = self._settings.get(guild.id).tracked_users
+        members_present = [
+            member
+            for user_id in tracked_user_ids
+            if (member := guild.get_member(user_id)) and member.voice and member.voice.channel
+        ]
 
         voice_client = guild.voice_client
-        if target_channel is None:
+        if not members_present:
             if voice_client is not None:
                 await self._disconnect(guild)
-        elif voice_client is None:
+            return
+
+        current_channel = voice_client.channel if voice_client else None
+        if current_channel and any(m.voice.channel.id == current_channel.id for m in members_present):
+            target_channel = current_channel
+        else:
+            target_channel = _busiest_channel(members_present)
+
+        if voice_client is None:
             await self._connect(target_channel)
         elif voice_client.channel.id != target_channel.id:
             await voice_client.move_to(target_channel)
@@ -115,12 +131,9 @@ class VoiceFollower:
         loop = asyncio.get_running_loop()
         try:
             while True:
-                text = await session.queue.get()
-                settings = self._settings.get(guild.id)
+                voice, text = await session.queue.get()
                 try:
-                    wav_bytes = await loop.run_in_executor(
-                        None, self._tts.synthesize, settings.voice, text
-                    )
+                    wav_bytes = await loop.run_in_executor(None, self._tts.synthesize, voice, text)
                 except Exception:
                     logger.exception("TTS synthesis failed for message: %r", text)
                     continue
@@ -172,3 +185,14 @@ class VoiceFollower:
             logger.info("Saved debug clip: %s", path)
         except OSError:
             logger.exception("Could not save debug clip for message: %r", text)
+
+
+def _busiest_channel(members: list[discord.Member]) -> discord.VoiceChannel:
+    counts: dict[int, int] = {}
+    channels: dict[int, discord.VoiceChannel] = {}
+    for member in members:
+        channel = member.voice.channel
+        counts[channel.id] = counts.get(channel.id, 0) + 1
+        channels[channel.id] = channel
+    busiest_id = max(counts, key=lambda cid: counts[cid])
+    return channels[busiest_id]

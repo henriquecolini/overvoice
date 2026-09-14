@@ -4,54 +4,71 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 
 @dataclass(frozen=True)
 class GuildSettings:
-    tracked_user_id: int | None
-    voice: str
+    tracked_users: dict[int, str]  # user_id -> voice
 
 
 class SettingsStore:
-    """Tracks which user and voice each guild has configured.
+    """Tracks which users (and their individual voices) each guild follows.
 
     Backed by a single JSON file so settings survive restarts without
-    requiring a database. Guilds that haven't configured anything yet fall
-    back to the store's default voice.
+    requiring a database.
     """
 
     def __init__(self, path: str, default_voice: str) -> None:
         self._path = Path(path)
-        self._default_voice = default_voice
+        self.default_voice = default_voice
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._data: dict[str, dict] = self._load()
+        self._data: dict[str, dict] = {}
+        self._load()
 
     def get(self, guild_id: int) -> GuildSettings:
         entry = self._data.get(str(guild_id), {})
-        return GuildSettings(
-            tracked_user_id=entry.get("tracked_user_id"),
-            voice=entry.get("voice", self._default_voice),
-        )
+        tracked = entry.get("tracked_users", {})
+        return GuildSettings(tracked_users={int(uid): voice for uid, voice in tracked.items()})
 
-    def set_tracked_user(self, guild_id: int, user_id: int | None) -> None:
-        self._update(guild_id, tracked_user_id=user_id)
-
-    def set_voice(self, guild_id: int, voice: str) -> None:
-        self._update(guild_id, voice=voice)
-
-    def _update(self, guild_id: int, **changes: object) -> None:
-        current = asdict(self.get(guild_id))
-        current.update(changes)
-        self._data[str(guild_id)] = current
+    def track_user(self, guild_id: int, user_id: int, voice: str | None = None) -> None:
+        entry = self._data.setdefault(str(guild_id), {})
+        tracked = entry.setdefault("tracked_users", {})
+        tracked[str(user_id)] = voice or tracked.get(str(user_id), self.default_voice)
         self._save()
 
-    def _load(self) -> dict[str, dict]:
+    def untrack_user(self, guild_id: int, user_id: int) -> None:
+        entry = self._data.get(str(guild_id))
+        if entry:
+            entry.get("tracked_users", {}).pop(str(user_id), None)
+            self._save()
+
+    def untrack_all(self, guild_id: int) -> None:
+        entry = self._data.get(str(guild_id))
+        if entry:
+            entry["tracked_users"] = {}
+            self._save()
+
+    def _load(self) -> None:
         if not self._path.exists():
-            return {}
+            return
         with self._path.open() as f:
-            return json.load(f)
+            data = json.load(f)
+
+        migrated = False
+        for entry in data.values():
+            if "tracked_users" in entry:
+                continue
+            # Migrate the old single-tracked-user format.
+            old_user_id = entry.pop("tracked_user_id", None)
+            old_voice = entry.pop("voice", self.default_voice)
+            entry["tracked_users"] = {str(old_user_id): old_voice} if old_user_id else {}
+            migrated = True
+
+        self._data = data
+        if migrated:
+            self._save()
 
     def _save(self) -> None:
         tmp_path = self._path.with_suffix(".tmp")

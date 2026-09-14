@@ -1,14 +1,16 @@
 # Overvoice
 
-A Discord bot that follows a chosen user into voice channels and speaks
+A Discord bot that follows chosen users into voice channels and speaks
 their text messages aloud, using [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)
 for fast, fully local, CPU-only speech synthesis. No "User says:" framing —
-just the message, spoken.
+just the message, spoken, each tracked user in their own chosen voice.
 
-Overvoice joins whatever voice channel its tracked user is in, and reads
+Overvoice joins whatever voice channel its tracked users are in, and reads
 anything they type into *that channel's own text chat* (the chat panel built
-into every Discord voice channel). It leaves when they leave, and follows
-when they move channels.
+into every Discord voice channel). Since a bot can only be in one voice
+channel per server at a time, it stays put as long as any tracked user is
+still there, and otherwise joins whichever channel currently has the most
+of them.
 
 Everything is configured per server with admin-only slash commands — no
 env vars to edit or restarts needed to change who it follows or what it
@@ -44,14 +46,17 @@ subsequent restarts start instantly and work offline.
 
 Once the bot is in your server, an admin runs:
 
-- `/overvoice track user:@someone` — follow this person into voice channels and read their messages
-- `/overvoice untrack` — stop following anyone
-- `/overvoice voice voice:pf_dora` — set the TTS voice (autocompletes as you type; see `bot/tts.py`'s `VOICES` list for every option — language is implied by the voice, e.g. `pf_dora` speaks Brazilian Portuguese, `af_bella` speaks American English)
+- `/overvoice track user:@someone [voice:pf_dora]` — follow this person into voice channels and read their messages, in the given voice (defaults to the server's default voice; autocompletes as you type — see `bot/tts.py`'s `VOICES` list for every option, language is implied by the voice, e.g. `pf_dora` speaks Brazilian Portuguese, `af_bella` speaks American English)
+- `/overvoice untrack [user:@someone]` — stop following one person, or everyone if no user is given
+- `/overvoice voice user:@someone voice:pf_dora` — change the voice for someone already being followed
 - `/overvoice preview voice:pf_dora` — post a short sample clip so everyone can hear a voice before picking it
-- `/overvoice say text:hello there` — post a spoken clip of arbitrary text using the server's current voice
-- `/overvoice status` — show the current tracked user and voice
+- `/overvoice say text:hello there [voice:pf_dora]` — anyone can post a spoken clip of arbitrary text, defaulting to their own voice if they're followed
+- `/overvoice status` — list everyone currently being followed and their voice
 
-Changes apply immediately — no restart needed.
+Multiple people can be followed at once, each with their own voice — the
+bot just can't be in two voice channels simultaneously (a Discord
+limitation), so it follows whichever channel has the most tracked people
+in it. Changes apply immediately — no restart needed.
 
 ## Configuration reference
 

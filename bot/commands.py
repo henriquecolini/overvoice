@@ -46,33 +46,62 @@ class OvervoiceGroup(app_commands.Group):
         self._max_chars = max_chars
 
     @app_commands.command(description="Follow this user into voice channels and read their messages aloud")
-    async def track(self, interaction: discord.Interaction, user: discord.Member) -> None:
+    async def track(
+        self, interaction: discord.Interaction, user: discord.Member, voice: str | None = None
+    ) -> None:
         if not await _require_moderator(interaction):
             return
-        self._settings.set_tracked_user(interaction.guild_id, user.id)
-        await self._follower.resync_guild(interaction.guild)
-        await interaction.response.send_message(f"Now following {user.mention}.", ephemeral=True)
+        if voice is not None and voice not in VOICES:
+            await interaction.response.send_message(
+                f"Unknown voice {voice!r}. Use the autocomplete list.", ephemeral=True
+            )
+            return
 
-    @app_commands.command(description="Stop following anyone and leave voice")
-    async def untrack(self, interaction: discord.Interaction) -> None:
+        self._settings.track_user(interaction.guild_id, user.id, voice)
+        await self._follower.resync_guild(interaction.guild)
+        picked_voice = self._settings.get(interaction.guild_id).tracked_users[user.id]
+        await interaction.response.send_message(
+            f"Now following {user.mention} with voice **{picked_voice}**.", ephemeral=True
+        )
+
+    @track.autocomplete("voice")
+    async def _track_voice_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        return _matching_voice_choices(current)
+
+    @app_commands.command(description="Stop following a user (or everyone, if none is given)")
+    async def untrack(
+        self, interaction: discord.Interaction, user: discord.Member | None = None
+    ) -> None:
         if not await _require_moderator(interaction):
             return
-        self._settings.set_tracked_user(interaction.guild_id, None)
+        if user is None:
+            self._settings.untrack_all(interaction.guild_id)
+            message = "Stopped following everyone."
+        else:
+            self._settings.untrack_user(interaction.guild_id, user.id)
+            message = f"Stopped following {user.mention}."
         await self._follower.resync_guild(interaction.guild)
-        await interaction.response.send_message("Stopped following anyone.", ephemeral=True)
+        await interaction.response.send_message(message, ephemeral=True)
 
-    @app_commands.command(description="Set the TTS voice used for this server")
-    async def voice(self, interaction: discord.Interaction, voice: str) -> None:
+    @app_commands.command(description="Change the TTS voice for a user this server already follows")
+    async def voice(self, interaction: discord.Interaction, user: discord.Member, voice: str) -> None:
         if not await _require_moderator(interaction):
+            return
+        if user.id not in self._settings.get(interaction.guild_id).tracked_users:
+            await interaction.response.send_message(
+                f"{user.mention} isn't being followed. Use `/overvoice track` first.", ephemeral=True
+            )
             return
         if voice not in VOICES:
             await interaction.response.send_message(
                 f"Unknown voice {voice!r}. Use the autocomplete list.", ephemeral=True
             )
             return
-        self._settings.set_voice(interaction.guild_id, voice)
+        self._settings.track_user(interaction.guild_id, user.id, voice)
         await interaction.response.send_message(
-            f"Voice set to **{voice}** ({language_for_voice(voice)}).", ephemeral=True
+            f"{user.mention}'s voice set to **{voice}** ({language_for_voice(voice)}).", ephemeral=True
         )
 
     @voice.autocomplete("voice")
@@ -109,27 +138,42 @@ class OvervoiceGroup(app_commands.Group):
     ) -> list[app_commands.Choice[str]]:
         return _matching_voice_choices(current)
 
-    @app_commands.command(description="Generate a spoken clip using this server's configured voice")
-    async def say(self, interaction: discord.Interaction, text: str) -> None:
+    @app_commands.command(description="Generate a spoken clip, using your own voice if you're followed")
+    async def say(
+        self, interaction: discord.Interaction, text: str, voice: str | None = None
+    ) -> None:
+        if voice is not None and voice not in VOICES:
+            await interaction.response.send_message(
+                f"Unknown voice {voice!r}. Use the autocomplete list.", ephemeral=True
+            )
+            return
+
         text = text[: self._max_chars]
         settings = self._settings.get(interaction.guild_id)
+        chosen_voice = voice or settings.tracked_users.get(interaction.user.id, self._settings.default_voice)
 
         await interaction.response.defer()
         loop = asyncio.get_running_loop()
-        wav_bytes = await loop.run_in_executor(None, self._tts.synthesize, settings.voice, text)
+        wav_bytes = await loop.run_in_executor(None, self._tts.synthesize, chosen_voice, text)
         clip = discord.File(io.BytesIO(wav_bytes), filename="audio.wav")
         await interaction.followup.send(content=text, file=clip)
 
-    @app_commands.command(description="Show this server's current Overvoice settings")
+    @say.autocomplete("voice")
+    async def _say_voice_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        return _matching_voice_choices(current)
+
+    @app_commands.command(description="Show who this server is currently following")
     async def status(self, interaction: discord.Interaction) -> None:
         if not await _require_moderator(interaction):
             return
-        settings = self._settings.get(interaction.guild_id)
-        tracked = f"<@{settings.tracked_user_id}>" if settings.tracked_user_id else "nobody"
-        await interaction.response.send_message(
-            f"Tracking: {tracked}\nVoice: **{settings.voice}** ({language_for_voice(settings.voice)})",
-            ephemeral=True,
-        )
+        tracked = self._settings.get(interaction.guild_id).tracked_users
+        if not tracked:
+            await interaction.response.send_message("Following nobody right now.", ephemeral=True)
+            return
+        lines = [f"<@{user_id}>: **{voice}** ({language_for_voice(voice)})" for user_id, voice in tracked.items()]
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
 def _matching_voice_choices(current: str) -> list[app_commands.Choice[str]]:
