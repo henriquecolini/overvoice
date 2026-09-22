@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 
 import discord
 from discord import app_commands
 
 from .follower import VoiceFollower
 from .settings import SettingsStore
-from .tts import VOICES, TTSCatalog
+from .tts import VOICES, TTSCatalog, resolve_voice
+
+_VOICE_WORD_SEPARATORS = re.compile(r"[\s(),]+")
 
 
 class OvervoiceGroup(app_commands.Group):
@@ -39,20 +42,20 @@ class OvervoiceGroup(app_commands.Group):
     ) -> None:
         if not await _require_moderator(interaction):
             return
-        if voice is not None and voice not in VOICES:
-            await interaction.response.send_message(
-                f"Unknown voice {voice!r}. Use the autocomplete list.", ephemeral=True
-            )
-            return
+        if voice is not None:
+            voice = resolve_voice(voice)
+            if voice is None:
+                await _reject_unknown_voice(interaction)
+                return
 
         already_tracked = user.id in self._settings.get(interaction.guild_id).tracked_users
         self._settings.track_user(interaction.guild_id, user.id, voice)
         await self._follower.resync_guild(interaction.guild)
-        picked_voice = self._settings.get(interaction.guild_id).tracked_users[user.id]
+        picked_voice = VOICES[self._settings.get(interaction.guild_id).tracked_users[user.id]]
         if already_tracked:
-            message = f"{user.mention} is followed with voice **{picked_voice}**."
+            message = f"{user.mention} is followed with voice **{picked_voice.display_name}**."
         else:
-            message = f"Now following {user.mention} with voice **{picked_voice}**."
+            message = f"Now following {user.mention} with voice **{picked_voice.display_name}**."
         await interaction.response.send_message(message, ephemeral=True)
 
     @track.autocomplete("voice")
@@ -80,11 +83,11 @@ class OvervoiceGroup(app_commands.Group):
     async def say(
         self, interaction: discord.Interaction, text: str, voice: str | None = None
     ) -> None:
-        if voice is not None and voice not in VOICES:
-            await interaction.response.send_message(
-                f"Unknown voice {voice!r}. Use the autocomplete list.", ephemeral=True
-            )
-            return
+        if voice is not None:
+            voice = resolve_voice(voice)
+            if voice is None:
+                await _reject_unknown_voice(interaction)
+                return
 
         text = text[: self._max_chars]
         settings = self._settings.get(interaction.guild_id)
@@ -102,9 +105,24 @@ class OvervoiceGroup(app_commands.Group):
     ) -> list[app_commands.Choice[str]]:
         return _matching_voice_choices(current)
 
+
 def _matching_voice_choices(current: str) -> list[app_commands.Choice[str]]:
-    matches = [v for v in VOICES if current.lower() in v.lower()]
-    return [app_commands.Choice(name=v, value=v) for v in matches[:25]]
+    # Every typed word must start a word of the voice's display name, so
+    # "fab", "piper" or "pt female" all narrow the list (and "male" doesn't
+    # match "female"). Discord shows at most 25 choices.
+    typed = current.lower().split()
+    matches = []
+    for voice in VOICES.values():
+        words = _VOICE_WORD_SEPARATORS.split(voice.display_name.lower())
+        if all(any(word.startswith(t) for word in words) for t in typed):
+            matches.append(voice)
+    return [app_commands.Choice(name=v.display_name, value=v.slug) for v in matches[:25]]
+
+
+async def _reject_unknown_voice(interaction: discord.Interaction) -> None:
+    await interaction.response.send_message(
+        "Unknown voice. Pick one from the autocomplete list.", ephemeral=True
+    )
 
 
 async def _require_moderator(interaction: discord.Interaction) -> bool:

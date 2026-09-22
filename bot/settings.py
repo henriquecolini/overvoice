@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,9 +21,15 @@ class SettingsStore:
     requiring a database.
     """
 
-    def __init__(self, path: str, default_voice: str) -> None:
+    def __init__(
+        self, path: str, default_voice: str, resolve_voice: Callable[[str], str | None]
+    ) -> None:
+        """`resolve_voice` maps a stored voice ID to its current name (or
+        None if it no longer exists), so voice renames don't break saved
+        settings."""
         self._path = Path(path)
         self.default_voice = default_voice
+        self._resolve_voice = resolve_voice
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._data: dict[str, dict] = {}
         self._load()
@@ -58,13 +65,19 @@ class SettingsStore:
 
         migrated = False
         for entry in data.values():
-            if "tracked_users" in entry:
-                continue
-            # Migrate the old single-tracked-user format.
-            old_user_id = entry.pop("tracked_user_id", None)
-            old_voice = entry.pop("voice", self.default_voice)
-            entry["tracked_users"] = {str(old_user_id): old_voice} if old_user_id else {}
-            migrated = True
+            if "tracked_users" not in entry:
+                # Migrate the old single-tracked-user format.
+                old_user_id = entry.pop("tracked_user_id", None)
+                old_voice = entry.pop("voice", self.default_voice)
+                entry["tracked_users"] = {str(old_user_id): old_voice} if old_user_id else {}
+                migrated = True
+
+            tracked = entry["tracked_users"]
+            for user_id, voice in tracked.items():
+                current = self._resolve_voice(voice) or self.default_voice
+                if current != voice:
+                    tracked[user_id] = current
+                    migrated = True
 
         self._data = data
         if migrated:

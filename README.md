@@ -56,9 +56,9 @@ settings persist in the `overvoice-data` volume.
 
 Once the bot is in your server, an admin runs:
 
-- `/overvoice track user:@someone [voice:pf_dora]` — follow this person into voice channels and read their messages in the given voice. Run it again on someone already followed to change their voice; leave `voice` out to keep it (new users get the server's default voice). Voices autocomplete as you type — see `bot/tts.py`'s `PIPER_VOICES` and `KOKORO_VOICES` for every option; the language is implied by the voice, e.g. `pf_dora` speaks Brazilian Portuguese, `af_bella` speaks American English.
+- `/overvoice track user:@someone [voice]` — follow this person into voice channels and read their messages in the given voice. Run it again on someone already followed to change their voice; leave `voice` out to keep it (new users get the default voice). Voices autocomplete by name, e.g. "Faber (Piper, pt-br, male)" — type any part, like `faber`, `piper` or `pt female`, to narrow the list.
 - `/overvoice untrack [user:@someone]` — stop following one person, or everyone if no user is given
-- `/overvoice say text:hello there [voice:pf_dora]` — anyone can post a spoken clip of arbitrary text, defaulting to their own voice if they're followed (also handy for hearing a voice before picking it)
+- `/overvoice say text:hello there [voice]` — anyone can post a spoken clip of arbitrary text, defaulting to their own voice if they're followed (also handy for hearing a voice before picking it)
 
 Multiple people can be followed at once, each with their own voice — the
 bot just can't be in two voice channels simultaneously (a Discord
@@ -73,18 +73,22 @@ four-sentence Brazilian Portuguese message:
 
 | Voices | Engine | Time until it starts speaking |
 |---|---|---|
-| `pt_BR-faber-medium`, `pt_BR-cadu-medium`, `pt_BR-jeff-medium` | Piper | ~0.1–0.25s |
-| `pf_dora`, `pm_alex`, `pm_santa` (and every other Kokoro voice) | Kokoro | ~0.4–0.8s |
+| Faber, Cadu, Jeff (Piper, pt-br, male) | Piper | ~0.1–0.25s |
+| Dora (female), Alex, Santa (male) — Kokoro, pt-br — and every other Kokoro voice | Kokoro | ~0.4–0.8s |
 
-Piper has no female Brazilian Portuguese voice, so `pf_dora` is the only
-female pt-BR option.
+Piper has no female Brazilian Portuguese voice, so Dora is the only
+female pt-br option.
+
+Each voice's ID is `<engine>_<language>_<male|female>_<name>`, e.g.
+`piper_pt-br_male_faber`; see `VOICES` in `bot/tts.py`. Older IDs like
+`pf_dora` still work, and saved settings are converted automatically.
 
 ## Configuration reference
 
 | Variable | Default | Description |
 |---|---|---|
 | `DISCORD_BOT_TOKEN` | — | Bot token from the Developer Portal |
-| `TTS_DEFAULT_VOICE` | `af_heart` | Voice for users added with `/overvoice track` without a `voice` |
+| `TTS_DEFAULT_VOICE` | `kokoro_en-us_female_heart` | Voice for users added with `/overvoice track` without a `voice` |
 | `TTS_MAX_CHARS` | `500` | Messages longer than this are truncated before being spoken |
 | `TTS_DEBUG_DIR` | unset | If set, saves every generated clip as a `.wav` file there (inside the container unless you mount a volume there) |
 | `SETTINGS_PATH` | `data/guild_settings.json` | Where per-server settings are persisted (the `overvoice-data` volume in Docker) |

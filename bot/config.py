@@ -31,7 +31,7 @@ def _require(name: str) -> str:
 def load_config() -> Config:
     return Config(
         discord_token=_require("DISCORD_BOT_TOKEN"),
-        tts_default_voice=os.environ.get("TTS_DEFAULT_VOICE", "af_heart"),
+        tts_default_voice=os.environ.get("TTS_DEFAULT_VOICE", "kokoro_en-us_female_heart"),
         tts_max_chars=int(os.environ.get("TTS_MAX_CHARS", "500")),
         tts_debug_dir=os.environ.get("TTS_DEBUG_DIR") or None,
         settings_path=os.environ.get("SETTINGS_PATH", "data/guild_settings.json"),

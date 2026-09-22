@@ -6,7 +6,7 @@ services:
     # lists these in its Environment Variables UI.
     environment:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:?}
-      TTS_DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-af_heart}
+      TTS_DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-kokoro_en-us_female_heart}
       TTS_MAX_CHARS: ${TTS_MAX_CHARS:-500}
       TTS_DEBUG_DIR: ${TTS_DEBUG_DIR:-}
     volumes:

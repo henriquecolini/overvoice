@@ -11,7 +11,7 @@ from .commands import OvervoiceGroup
 from .config import load_config
 from .follower import VoiceFollower
 from .settings import SettingsStore
-from .tts import TTSCatalog
+from .tts import TTSCatalog, resolve_voice
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -20,7 +20,10 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     config = load_config()
 
-    settings = SettingsStore(config.settings_path, config.tts_default_voice)
+    default_voice = resolve_voice(config.tts_default_voice)
+    if default_voice is None:
+        raise RuntimeError(f"Unknown TTS_DEFAULT_VOICE: {config.tts_default_voice!r}")
+    settings = SettingsStore(config.settings_path, default_voice, resolve_voice)
 
     logger.info("Loading Kokoro and Piper models...")
     tts = TTSCatalog(config.kokoro_model_dir, config.piper_model_dir)

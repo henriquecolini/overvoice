@@ -30,6 +30,7 @@ import threading
 import urllib.request
 import wave
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -51,30 +52,41 @@ _SENTENCE_GAP_SECONDS = 0.15
 
 _PIPER_RELEASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
-# Piper voice ID -> language. Each is a separate ~63MB model file.
-# (pt_BR-edresson-low is left out: it drops nasal vowels, e.g. "ão".)
-PIPER_VOICES = {
-    "pt_BR-faber-medium": "pt-br",
-    "pt_BR-cadu-medium": "pt-br",
-    "pt_BR-jeff-medium": "pt-br",
-}
-
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?…])\s+")
 
-# Kokoro voice IDs encode their language as a single-letter prefix.
-_LANGUAGE_BY_PREFIX = {
-    "a": "en-us",
-    "b": "en-gb",
-    "j": "ja",
-    "z": "cmn",
-    "e": "es",
-    "f": "fr-fr",
-    "h": "hi",
-    "i": "it",
-    "p": "pt-br",
-}
 
-KOKORO_VOICES = (
+@dataclass(frozen=True)
+class Voice:
+    engine: str  # "piper" or "kokoro"
+    model_id: str  # the engine's own ID, e.g. "pt_BR-faber-medium" or "pf_dora"
+    language: str  # espeak language code, e.g. "pt-br"
+    gender: str  # "male" or "female"
+    name: str
+
+    @property
+    def slug(self) -> str:
+        return f"{self.engine}_{self.language}_{self.gender}_{self.name.lower()}"
+
+    @property
+    def display_name(self) -> str:
+        return f"{self.name} ({self.engine.capitalize()}, {self.language}, {self.gender})"
+
+
+# Each Piper voice is a separate ~63MB model file. (pt_BR-edresson-low is
+# left out: it drops nasal vowels, e.g. "ão".)
+_PIPER_VOICES = (
+    Voice("piper", "pt_BR-faber-medium", "pt-br", "male", "Faber"),
+    Voice("piper", "pt_BR-cadu-medium", "pt-br", "male", "Cadu"),
+    Voice("piper", "pt_BR-jeff-medium", "pt-br", "male", "Jeff"),
+)
+
+# Kokoro voice IDs are "<language letter><f|m>_<name>", e.g. "pf_dora".
+_KOKORO_LANGUAGES = {
+    "a": "en-us", "b": "en-gb", "j": "ja", "z": "cmn", "e": "es",
+    "f": "fr-fr", "h": "hi", "i": "it", "p": "pt-br",
+}
+_KOKORO_VOICE_IDS = (
+    "pf_dora", "pm_alex", "pm_santa",
     "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", "af_kore",
     "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
     "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael",
@@ -88,16 +100,33 @@ KOKORO_VOICES = (
     "ff_siwis",
     "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
     "if_sara", "im_nicola",
-    "pf_dora", "pm_alex", "pm_santa",
+)
+_KOKORO_VOICES = tuple(
+    Voice(
+        "kokoro", model_id, _KOKORO_LANGUAGES[model_id[0]],
+        "female" if model_id[1] == "f" else "male", model_id[3:].capitalize(),
+    )
+    for model_id in _KOKORO_VOICE_IDS
 )
 
-VOICES = (*PIPER_VOICES, *KOKORO_VOICES)
+# Slug -> voice, e.g. "piper_pt-br_male_faber" -> Faber (Piper, pt-br, male).
+VOICES = {voice.slug: voice for voice in (*_PIPER_VOICES, *_KOKORO_VOICES)}
 
 
-def language_for_voice(voice: str) -> str:
-    if voice in PIPER_VOICES:
-        return PIPER_VOICES[voice]
-    return _LANGUAGE_BY_PREFIX[voice[0]]
+def resolve_voice(voice_id: str) -> str | None:
+    """Returns the slug for a slug, a display name, or an engine's own voice
+    ID (which is how voices used to be named, so older settings and env vars
+    keep working), or None if it's unknown."""
+    if voice_id in VOICES:
+        return voice_id
+    wanted = voice_id.strip().lower()
+    return next(
+        (
+            v.slug for v in VOICES.values()
+            if wanted in (v.model_id.lower(), v.display_name.lower())
+        ),
+        None,
+    )
 
 
 class TTSCatalog:
@@ -108,8 +137,8 @@ class TTSCatalog:
         )
         self._kokoro = Kokoro.from_session(_load_session(model_path), str(voices_path), espeak_config=espeak_config)
         self._piper = {
-            voice: _load_piper_voice(_ensure_piper_voice(Path(piper_model_dir), voice))
-            for voice in PIPER_VOICES
+            voice.model_id: _load_piper_voice(_ensure_piper_voice(Path(piper_model_dir), voice.model_id))
+            for voice in _PIPER_VOICES
         }
         # kokoro-onnx phonemizes via phonemizer.phonemize(), which builds a
         # new espeak backend on every call (~80ms per sentence); keep one per
@@ -120,7 +149,7 @@ class TTSCatalog:
 
         # Each model's first run is slower (ONNX Runtime sets up lazily), so
         # pay that at startup rather than on someone's first message.
-        for voice in ("pf_dora", *PIPER_VOICES):
+        for voice in ("kokoro_pt-br_female_dora", *(v.slug for v in _PIPER_VOICES)):
             self.synthesize(voice, "ok")
 
     def stream(self, voice: str, text: str) -> Iterator[tuple[np.ndarray, int]]:
@@ -137,8 +166,9 @@ class TTSCatalog:
         """Yields each sentence's audio with its surrounding silence trimmed.
         Every line break ends a sentence, whatever punctuation precedes it."""
         lines = [line for line in text.splitlines() if line.strip()]
-        if voice in self._piper:
-            piper_voice = self._piper[voice]
+        voice_info = VOICES[voice]
+        if voice_info.engine == "piper":
+            piper_voice = self._piper[voice_info.model_id]
             sample_rate = piper_voice.config.sample_rate
             for line in lines:
                 with self._phonemize_lock:
@@ -152,12 +182,11 @@ class TTSCatalog:
         # kokoro-onnx only splits text past 510 phonemes -- about a whole
         # chat message -- so split by sentence here to stream at all.
         # (Kokoro trims each sentence's silence itself.)
-        lang = language_for_voice(voice)
         for line in lines:
             for sentence in split_sentences(line):
-                phonemes = self._kokoro_phonemes(sentence, lang)
+                phonemes = self._kokoro_phonemes(sentence, voice_info.language)
                 if phonemes:
-                    samples, sample_rate = self._kokoro.create(phonemes, voice=voice, is_phonemes=True)
+                    samples, sample_rate = self._kokoro.create(phonemes, voice=voice_info.model_id, is_phonemes=True)
                     yield samples.astype(np.float32), sample_rate
 
     def synthesize(self, voice: str, text: str) -> bytes:
