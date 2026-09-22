@@ -77,7 +77,7 @@ four-sentence Brazilian Portuguese message:
 | Voices | Engine | Time until it starts speaking |
 |---|---|---|
 | `pt_BR-faber-medium`, `pt_BR-cadu-medium`, `pt_BR-jeff-medium` | Piper | ~0.1–0.25s |
-| `pf_dora`, `pm_alex`, `pm_santa` (and every other Kokoro voice) | Kokoro | ~0.8–1s |
+| `pf_dora`, `pm_alex`, `pm_santa` (and every other Kokoro voice) | Kokoro | ~0.4–0.8s |
 
 Piper has no female Brazilian Portuguese voice, so `pf_dora` is the only
 female pt-BR option.

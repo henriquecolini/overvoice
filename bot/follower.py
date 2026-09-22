@@ -7,6 +7,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import discord
@@ -41,6 +42,9 @@ class VoiceFollower:
         if self._debug_dir:
             self._debug_dir.mkdir(parents=True, exist_ok=True)
         self._sessions: dict[int, _GuildSession] = {}
+        # Voice events can arrive in bursts; without this, two resyncs can
+        # both see no voice client and both try to connect.
+        self._resync_locks: dict[int, asyncio.Lock] = {}
 
     async def on_ready(self, client: discord.Client) -> None:
         for guild in client.guilds:
@@ -90,6 +94,10 @@ class VoiceFollower:
         when tracked users are spread across channels it stays wherever it
         already is as long as a tracked user is still there, and otherwise
         joins whichever channel currently has the most of them."""
+        async with self._resync_locks.setdefault(guild.id, asyncio.Lock()):
+            await self._resync_guild(guild)
+
+    async def _resync_guild(self, guild: discord.Guild) -> None:
         tracked_user_ids = self._settings.get(guild.id).tracked_users
         members_present = [
             member
@@ -100,6 +108,7 @@ class VoiceFollower:
         voice_client = guild.voice_client
         if not members_present:
             if voice_client is not None:
+                logger.info("Leaving voice in %s: no tracked users in voice", guild.name)
                 await self._disconnect(guild)
             return
 
@@ -110,12 +119,19 @@ class VoiceFollower:
             target_channel = _busiest_channel(members_present)
 
         if voice_client is None:
+            logger.info("Joining %s in %s", target_channel.name, guild.name)
             await self._connect(target_channel)
         elif voice_client.channel.id != target_channel.id:
+            logger.info("Moving to %s in %s", target_channel.name, guild.name)
             await voice_client.move_to(target_channel)
 
     async def _connect(self, channel: discord.VoiceChannel) -> None:
         await channel.connect()
+        # If the bot was disconnected without going through _disconnect
+        # (kicked, channel deleted), its old playback loop is still around.
+        stale = self._sessions.pop(channel.guild.id, None)
+        if stale and stale.task:
+            stale.task.cancel()
         session = _GuildSession()
         self._sessions[channel.guild.id] = session
         session.task = asyncio.create_task(self._playback_loop(channel.guild, session))
@@ -149,10 +165,24 @@ class VoiceFollower:
                             logger.info("Played %r (%.2fs of audio in %.2fs)", text, source.fed_seconds, elapsed)
                         loop.call_soon_threadsafe(done.set)
 
-                    # Start playing right away: the source emits silence until
-                    # the first sentence arrives, then each one as it renders.
-                    voice_client.play(source, after=_after_playback)
-                    await loop.run_in_executor(None, self._render_into, source, voice, text)
+                    # Start playing once the first sentence is ready rather than
+                    # immediately, so the speaking indicator lights up with the
+                    # voice instead of ahead of it.
+                    first_audio = asyncio.Event()
+                    render = loop.run_in_executor(
+                        None, self._render_into, source, voice, text,
+                        lambda: loop.call_soon_threadsafe(first_audio.set),
+                    )
+                    first_audio_wait = asyncio.ensure_future(first_audio.wait())
+                    await asyncio.wait({render, first_audio_wait}, return_when=asyncio.FIRST_COMPLETED)
+                    first_audio_wait.cancel()
+                    if not first_audio.is_set():
+                        continue  # nothing to say (synthesis failed or produced no audio)
+
+                    # Tuned for speech at Discord's default channel bitrate;
+                    # discord.py's defaults target music at 128kbps.
+                    voice_client.play(source, after=_after_playback, bitrate=64, signal_type="voice")
+                    await render
                     await done.wait()
                 except Exception:
                     # A single message must never permanently kill this session's
@@ -161,7 +191,9 @@ class VoiceFollower:
         except asyncio.CancelledError:
             pass
 
-    def _render_into(self, source: StreamingPCMSource, voice: str, text: str) -> None:
+    def _render_into(
+        self, source: StreamingPCMSource, voice: str, text: str, on_first_audio: Callable[[], None]
+    ) -> None:
         """Runs in a worker thread: synthesizes `text` sentence by sentence
         into `source`, always marking it finished so playback can end."""
         start_time = time.monotonic()
@@ -169,9 +201,10 @@ class VoiceFollower:
         sample_rate = 0
         try:
             for samples, sample_rate in self._tts.stream(voice, text):
+                source.feed(samples, sample_rate)
                 if not chunks:
                     logger.info("First audio for %r after %.0fms", text, (time.monotonic() - start_time) * 1000)
-                source.feed(samples, sample_rate)
+                    on_first_audio()
                 chunks.append(samples)
         except Exception:
             logger.exception("TTS synthesis failed for message: %r", text)

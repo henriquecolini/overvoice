@@ -19,9 +19,10 @@ class StreamingPCMSource(discord.AudioSource):
 
     One source covers a whole message, so sentences play back to back with
     no gap between separate `play()` calls. If the next sentence isn't
-    ready yet, `read()` returns silence rather than blocking: blocking
-    would make the player send the frames that follow in a burst to catch
-    up, which Discord plays back as jitter.
+    ready yet, `read()` returns silence rather than blocking: discord.py
+    paces frames against a fixed clock, so after a blocking read it sends
+    the frames that follow in a burst to catch up, which Discord plays
+    back as jitter.
     """
 
     def __init__(self) -> None:

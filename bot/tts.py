@@ -23,25 +23,31 @@ from __future__ import annotations
 import ctypes.util
 import glob
 import io
+import json
 import os
+import re
+import threading
 import urllib.request
 import wave
-import re
 from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
+import onnxruntime as ort
 from kokoro_onnx import Kokoro
 from kokoro_onnx.config import EspeakConfig
+from kokoro_onnx.trim import trim as trim_audio
+from phonemizer.backend import EspeakBackend
 from piper import PiperVoice
+from piper.config import PiperConfig
 
 _MODEL_RELEASE_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
 _MODEL_FILENAME = "kokoro-v1.0.onnx"
 _VOICES_FILENAME = "voices-v1.0.bin"
 _KOKORO_SAMPLE_RATE = 24000
-# Kokoro trims each sentence's silence, so add a short breath between them.
-# (Piper's sentences already end with ~100ms of silence.)
-_KOKORO_SENTENCE_GAP_SECONDS = 0.15
+# Each sentence is rendered with its surrounding silence trimmed, so add a
+# short breath between them.
+_SENTENCE_GAP_SECONDS = 0.15
 
 _PIPER_RELEASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
@@ -104,27 +110,55 @@ class TTSCatalog:
         espeak_config = EspeakConfig(
             lib_path=_find_espeak_library(), data_path=_find_espeak_data_path()
         )
-        self._kokoro = Kokoro(str(model_path), str(voices_path), espeak_config=espeak_config)
+        self._kokoro = Kokoro.from_session(_load_session(model_path), str(voices_path), espeak_config=espeak_config)
         self._piper = {
-            voice: PiperVoice.load(str(_ensure_piper_voice(Path(piper_model_dir), voice)))
+            voice: _load_piper_voice(_ensure_piper_voice(Path(piper_model_dir), voice))
             for voice in PIPER_VOICES
         }
+        # kokoro-onnx phonemizes via phonemizer.phonemize(), which builds a
+        # new espeak backend on every call (~80ms per sentence); keep one per
+        # language instead. espeak-ng isn't thread-safe, and synthesis runs in
+        # worker threads, so every phonemization goes through this lock.
+        self._espeak_backends: dict[str, EspeakBackend] = {}
+        self._phonemize_lock = threading.Lock()
+
+        # Each model's first run is slower (ONNX Runtime sets up lazily), so
+        # pay that at startup rather than on someone's first message.
+        for voice in ("pf_dora", *PIPER_VOICES):
+            self.synthesize(voice, "ok")
 
     def stream(self, voice: str, text: str) -> Iterator[tuple[np.ndarray, int]]:
         """Blocking generator: yields (float32 mono samples, sample rate),
         one sentence at a time, so playback can start before the rest of
         the message has rendered."""
+        for i, (samples, sample_rate) in enumerate(self._render_sentences(voice, text)):
+            if i:
+                gap = np.zeros(int(_SENTENCE_GAP_SECONDS * sample_rate), dtype=np.float32)
+                samples = np.concatenate([gap, samples])
+            yield samples, sample_rate
+
+    def _render_sentences(self, voice: str, text: str) -> Iterator[tuple[np.ndarray, int]]:
+        """Yields each sentence's audio with its surrounding silence trimmed."""
         if voice in self._piper:
-            for chunk in self._piper[voice].synthesize(text):
-                yield chunk.audio_float_array, chunk.sample_rate
+            piper_voice = self._piper[voice]
+            with self._phonemize_lock:
+                sentences = piper_voice.phonemize(text)
+            for phonemes in sentences:
+                if phonemes:
+                    audio = piper_voice.phoneme_ids_to_audio(piper_voice.phonemes_to_ids(phonemes))
+                    sample_rate = piper_voice.config.sample_rate
+                    yield _trim_silence(audio, sample_rate), sample_rate
             return
 
+        # kokoro-onnx only splits text past 510 phonemes -- about a whole
+        # chat message -- so split by sentence here to stream at all.
+        # (Kokoro trims each sentence's silence itself.)
         lang = language_for_voice(voice)
-        gap = np.zeros(int(_KOKORO_SENTENCE_GAP_SECONDS * _KOKORO_SAMPLE_RATE), dtype=np.float32)
-        for i, sentence in enumerate(split_sentences(text)):
-            samples, sample_rate = self._kokoro.create(sentence, voice=voice, lang=lang)
-            samples = samples.astype(np.float32)
-            yield (np.concatenate([gap, samples]) if i else samples), sample_rate
+        for sentence in split_sentences(text):
+            phonemes = self._kokoro_phonemes(sentence, lang)
+            if phonemes:
+                samples, sample_rate = self._kokoro.create(phonemes, voice=voice, is_phonemes=True)
+                yield samples.astype(np.float32), sample_rate
 
     def synthesize(self, voice: str, text: str) -> bytes:
         """Blocking call: renders the whole text to 16-bit PCM WAV bytes."""
@@ -132,6 +166,46 @@ class TTSCatalog:
         sample_rate = chunks[0][1] if chunks else _KOKORO_SAMPLE_RATE
         samples = np.concatenate([c for c, _ in chunks]) if chunks else np.zeros(0, np.float32)
         return to_wav(samples, sample_rate)
+
+    def _kokoro_phonemes(self, text: str, lang: str) -> str:
+        with self._phonemize_lock:
+            backend = self._espeak_backends.get(lang)
+            if backend is None:
+                backend = EspeakBackend(lang, preserve_punctuation=True, with_stress=True)
+                self._espeak_backends[lang] = backend
+            phonemes = backend.phonemize([text.strip()])[0]
+        vocab = self._kokoro.tokenizer.vocab
+        return "".join(p for p in phonemes if p in vocab).strip()
+
+
+def _trim_silence(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    # Some Piper voices (cadu, jeff) open every sentence with ~0.4-0.6s of
+    # low-level noise, which delays speech and stretches sentence gaps.
+    # 30dB below the loudest ~23ms stretch cuts that noise without clipping
+    # quiet word starts like "s" or "f".
+    trimmed, _ = trim_audio(audio, top_db=30, frame_length=512, hop_length=128)
+    # The cut lands mid-waveform; a 5ms fade at each edge avoids a click.
+    fade = np.linspace(0.0, 1.0, min(int(0.005 * sample_rate), len(trimmed) // 2), dtype=np.float32)
+    trimmed = trimmed.copy()
+    trimmed[: len(fade)] *= fade
+    trimmed[len(trimmed) - len(fade):] *= fade[::-1]
+    return trimmed
+
+
+def _load_session(model_path: Path) -> ort.InferenceSession:
+    # ONNX Runtime's memory arena keeps a buffer for every input size it has
+    # seen, so with chat messages of all lengths it roughly doubles the bot's
+    # memory (~0.75GB -> ~1.6GB); without it memory stays flat, at no
+    # measurable speed cost.
+    options = ort.SessionOptions()
+    options.enable_cpu_mem_arena = False
+    return ort.InferenceSession(str(model_path), options, providers=["CPUExecutionProvider"])
+
+
+def _load_piper_voice(model_path: Path) -> PiperVoice:
+    with open(f"{model_path}.json", encoding="utf-8") as config_file:
+        config = PiperConfig.from_dict(json.load(config_file))
+    return PiperVoice(session=_load_session(model_path), config=config)
 
 
 def split_sentences(text: str) -> list[str]:

@@ -1,6 +1,8 @@
 discord.py[voice]
 kokoro-onnx
+onnxruntime
+phonemizer-fork
+piper-tts
 python-dotenv
 numpy
-piper-tts
 soxr
