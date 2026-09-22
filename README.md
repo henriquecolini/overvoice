@@ -56,12 +56,9 @@ settings persist in the `overvoice-data` volume.
 
 Once the bot is in your server, an admin runs:
 
-- `/overvoice track user:@someone [voice:pf_dora]` — follow this person into voice channels and read their messages, in the given voice (defaults to the server's default voice; autocompletes as you type — see `bot/tts.py`'s `PIPER_VOICES` and `KOKORO_VOICES` for every option, language is implied by the voice, e.g. `pf_dora` speaks Brazilian Portuguese, `af_bella` speaks American English)
+- `/overvoice track user:@someone [voice:pf_dora]` — follow this person into voice channels and read their messages in the given voice. Run it again on someone already followed to change their voice; leave `voice` out to keep it (new users get the server's default voice). Voices autocomplete as you type — see `bot/tts.py`'s `PIPER_VOICES` and `KOKORO_VOICES` for every option; the language is implied by the voice, e.g. `pf_dora` speaks Brazilian Portuguese, `af_bella` speaks American English.
 - `/overvoice untrack [user:@someone]` — stop following one person, or everyone if no user is given
-- `/overvoice voice user:@someone voice:pf_dora` — change the voice for someone already being followed
-- `/overvoice preview voice:pf_dora` — post a short sample clip so everyone can hear a voice before picking it
-- `/overvoice say text:hello there [voice:pf_dora]` — anyone can post a spoken clip of arbitrary text, defaulting to their own voice if they're followed
-- `/overvoice status` — list everyone currently being followed and their voice
+- `/overvoice say text:hello there [voice:pf_dora]` — anyone can post a spoken clip of arbitrary text, defaulting to their own voice if they're followed (also handy for hearing a voice before picking it)
 
 Multiple people can be followed at once, each with their own voice — the
 bot just can't be in two voice channels simultaneously (a Discord
@@ -87,7 +84,7 @@ female pt-BR option.
 | Variable | Default | Description |
 |---|---|---|
 | `DISCORD_BOT_TOKEN` | — | Bot token from the Developer Portal |
-| `TTS_DEFAULT_VOICE` | `af_heart` | Voice for servers that haven't run `/overvoice voice` yet |
+| `TTS_DEFAULT_VOICE` | `af_heart` | Voice for users added with `/overvoice track` without a `voice` |
 | `TTS_MAX_CHARS` | `500` | Messages longer than this are truncated before being spoken |
 | `TTS_DEBUG_DIR` | unset | If set, saves every generated clip as a `.wav` file there (inside the container unless you mount a volume there) |
 | `SETTINGS_PATH` | `data/guild_settings.json` | Where per-server settings are persisted (the `overvoice-data` volume in Docker) |

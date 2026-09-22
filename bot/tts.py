@@ -100,10 +100,6 @@ def language_for_voice(voice: str) -> str:
     return _LANGUAGE_BY_PREFIX[voice[0]]
 
 
-def engine_for_voice(voice: str) -> str:
-    return "piper" if voice in PIPER_VOICES else "kokoro"
-
-
 class TTSCatalog:
     def __init__(self, kokoro_model_dir: str = "models/kokoro", piper_model_dir: str = "models/piper") -> None:
         model_path, voices_path = _ensure_model_files(Path(kokoro_model_dir))
