@@ -56,8 +56,8 @@ settings persist in the `overvoice-data` volume.
 
 Once the bot is in your server, an admin runs:
 
-- `/overvoice track user:@someone [voice]` — follow this person into voice channels and read their messages in the given voice. Run it again on someone already followed to change their voice; leave `voice` out to keep it (new users get the default voice). Voices autocomplete by name, e.g. "Faber (Piper, pt-br, male)" — type any part, like `faber`, `piper` or `pt female`, to narrow the list.
-- `/overvoice untrack [user:@someone]` — stop following one person, or everyone if no user is given
+- `/overvoice track user:@someone [voice]` — follow this person into voice channels and read their messages in the given voice. Run it again on someone already followed to change their voice; leave `voice` out to keep it (new users get the default voice). Voices autocomplete by name, e.g. "Faber (Piper, pt-br, male)" — type any part, like `faber`, `piper` or `pt female`, to narrow the list. Requires the Moderate Members permission, except that anyone already followed can run it on themselves to change their own voice.
+- `/overvoice untrack [user:@someone]` — stop following one person, or everyone if no user is given (requires Moderate Members)
 - `/overvoice say text:hello there [voice]` — anyone can post a spoken clip of arbitrary text, defaulting to their own voice if they're followed (also handy for hearing a voice before picking it)
 
 Multiple people can be followed at once, each with their own voice — the

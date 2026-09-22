@@ -19,8 +19,9 @@ _VOICE_WORD_SEPARATORS = re.compile(r"[\s(),]+")
 class OvervoiceGroup(app_commands.Group):
     """The `/overvoice` command group.
 
-    `track` and `untrack` require the Moderate Members permission; `say`
-    is open to everyone.
+    `track` and `untrack` require the Moderate Members permission, except
+    that anyone already followed may use `track` to change their own
+    voice; `say` is open to everyone.
     """
 
     def __init__(
@@ -40,7 +41,15 @@ class OvervoiceGroup(app_commands.Group):
     async def track(
         self, interaction: discord.Interaction, user: discord.Member, voice: str | None = None
     ) -> None:
-        if not await _require_moderator(interaction):
+        already_tracked = user.id in self._settings.get(interaction.guild_id).tracked_users
+        # Anyone already followed may change their own voice; following
+        # someone new or changing someone else's voice is for moderators.
+        changing_own_voice = already_tracked and user.id == interaction.user.id
+        if not changing_own_voice and not await _require_moderator(
+            interaction,
+            "You need the **Moderate Members** permission to follow someone or change "
+            "someone else's voice. Once you're followed, you can change your own voice.",
+        ):
             return
         if voice is not None:
             voice = resolve_voice(voice)
@@ -48,7 +57,6 @@ class OvervoiceGroup(app_commands.Group):
                 await _reject_unknown_voice(interaction)
                 return
 
-        already_tracked = user.id in self._settings.get(interaction.guild_id).tracked_users
         self._settings.track_user(interaction.guild_id, user.id, voice)
         await self._follower.resync_guild(interaction.guild)
         picked_voice = VOICES[self._settings.get(interaction.guild_id).tracked_users[user.id]]
@@ -125,10 +133,11 @@ async def _reject_unknown_voice(interaction: discord.Interaction) -> None:
     )
 
 
-async def _require_moderator(interaction: discord.Interaction) -> bool:
+async def _require_moderator(
+    interaction: discord.Interaction,
+    denial: str = "You need the **Moderate Members** permission to use this command.",
+) -> bool:
     if interaction.user.guild_permissions.moderate_members:
         return True
-    await interaction.response.send_message(
-        "You need the **Moderate Members** permission to use this command.", ephemeral=True
-    )
+    await interaction.response.send_message(denial, ephemeral=True)
     return False
