@@ -10,7 +10,7 @@ from discord import app_commands
 
 from .follower import VoiceFollower
 from .settings import SettingsStore
-from .tts import VOICES, TTSCatalog, language_for_voice
+from .tts import VOICES, TTSCatalog, engine_for_voice, language_for_voice
 
 _PREVIEW_TEXT = {
     "en-us": "Hello! This is a preview of this voice.",
@@ -101,7 +101,7 @@ class OvervoiceGroup(app_commands.Group):
             return
         self._settings.track_user(interaction.guild_id, user.id, voice)
         await interaction.response.send_message(
-            f"{user.mention}'s voice set to **{voice}** ({language_for_voice(voice)}).", ephemeral=True
+            f"{user.mention}'s voice set to **{voice}** ({_describe(voice)}).", ephemeral=True
         )
 
     @voice.autocomplete("voice")
@@ -129,7 +129,7 @@ class OvervoiceGroup(app_commands.Group):
         wav_bytes = await loop.run_in_executor(None, self._tts.synthesize, voice, sample_text)
         clip = discord.File(io.BytesIO(wav_bytes), filename=f"{voice}.wav")
         await interaction.followup.send(
-            content=f"**{voice}** ({language}): {sample_text}", file=clip
+            content=f"**{voice}** ({_describe(voice)}): {sample_text}", file=clip
         )
 
     @preview.autocomplete("voice")
@@ -172,8 +172,12 @@ class OvervoiceGroup(app_commands.Group):
         if not tracked:
             await interaction.response.send_message("Following nobody right now.", ephemeral=True)
             return
-        lines = [f"<@{user_id}>: **{voice}** ({language_for_voice(voice)})" for user_id, voice in tracked.items()]
+        lines = [f"<@{user_id}>: **{voice}** ({_describe(voice)})" for user_id, voice in tracked.items()]
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+
+def _describe(voice: str) -> str:
+    return f"{language_for_voice(voice)}, {engine_for_voice(voice)}"
 
 
 def _matching_voice_choices(current: str) -> list[app_commands.Choice[str]]:

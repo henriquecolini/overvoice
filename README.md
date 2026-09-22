@@ -1,8 +1,10 @@
 # Overvoice
 
 A Discord bot that follows chosen users into voice channels and speaks
-their text messages aloud, using [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)
-for fast, fully local, CPU-only speech synthesis. No "User says:" framing —
+their text messages aloud, using fully local, CPU-only speech synthesis:
+[Piper](https://github.com/OHF-Voice/piper1-gpl) voices start speaking almost
+instantly, and [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) voices sound
+more natural but take a little longer. No "User says:" framing —
 just the message, spoken, each tracked user in their own chosen voice.
 
 Overvoice joins whatever voice channel its tracked users are in, and reads
@@ -39,7 +41,7 @@ Fill in `DISCORD_BOT_TOKEN`. Everything else is optional (see below).
 docker compose up --build
 ```
 
-The first start downloads the Kokoro model weights into the `overvoice-models`
+The first start downloads the Kokoro and Piper model weights into the `overvoice-models`
 volume, so subsequent restarts start instantly and work offline. Per-server
 settings persist in the `overvoice-data` volume.
 
@@ -54,7 +56,7 @@ settings persist in the `overvoice-data` volume.
 
 Once the bot is in your server, an admin runs:
 
-- `/overvoice track user:@someone [voice:pf_dora]` — follow this person into voice channels and read their messages, in the given voice (defaults to the server's default voice; autocompletes as you type — see `bot/tts.py`'s `VOICES` list for every option, language is implied by the voice, e.g. `pf_dora` speaks Brazilian Portuguese, `af_bella` speaks American English)
+- `/overvoice track user:@someone [voice:pf_dora]` — follow this person into voice channels and read their messages, in the given voice (defaults to the server's default voice; autocompletes as you type — see `bot/tts.py`'s `PIPER_VOICES` and `KOKORO_VOICES` for every option, language is implied by the voice, e.g. `pf_dora` speaks Brazilian Portuguese, `af_bella` speaks American English)
 - `/overvoice untrack [user:@someone]` — stop following one person, or everyone if no user is given
 - `/overvoice voice user:@someone voice:pf_dora` — change the voice for someone already being followed
 - `/overvoice preview voice:pf_dora` — post a short sample clip so everyone can hear a voice before picking it
@@ -66,6 +68,20 @@ bot just can't be in two voice channels simultaneously (a Discord
 limitation), so it follows whichever channel has the most tracked people
 in it. Changes apply immediately — no restart needed.
 
+## Voices and latency
+
+Every voice renders sentence by sentence, and playback starts as soon as
+the first sentence is ready. Measured on a Ryzen 5 3600 with a
+four-sentence Brazilian Portuguese message:
+
+| Voices | Engine | Time until it starts speaking |
+|---|---|---|
+| `pt_BR-faber-medium`, `pt_BR-cadu-medium`, `pt_BR-jeff-medium` | Piper | ~0.1–0.25s |
+| `pf_dora`, `pm_alex`, `pm_santa` (and every other Kokoro voice) | Kokoro | ~0.8–1s |
+
+Piper has no female Brazilian Portuguese voice, so `pf_dora` is the only
+female pt-BR option.
+
 ## Configuration reference
 
 | Variable | Default | Description |
@@ -76,6 +92,7 @@ in it. Changes apply immediately — no restart needed.
 | `TTS_DEBUG_DIR` | unset | If set, saves every generated clip as a `.wav` file there (inside the container unless you mount a volume there) |
 | `SETTINGS_PATH` | `data/guild_settings.json` | Where per-server settings are persisted (the `overvoice-data` volume in Docker) |
 | `KOKORO_MODEL_DIR` | `models/kokoro` | Where Kokoro's model weights are downloaded to (the `overvoice-models` volume in Docker) |
+| `PIPER_MODEL_DIR` | `models/piper` | Where Piper's voice models are downloaded to (the `overvoice-models` volume in Docker) |
 
 ## Local development (without Docker)
 

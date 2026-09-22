@@ -4,18 +4,18 @@ speaks their messages, sent in that channel's text chat, aloud."""
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import re
 import time
-import wave
 from pathlib import Path
 
 import discord
+import numpy as np
 
+from .audio import StreamingPCMSource
 from .settings import SettingsStore
 from .text_cleanup import sanitize_message
-from .tts import TTSCatalog
+from .tts import TTSCatalog, to_wav
 
 logger = logging.getLogger(__name__)
 
@@ -132,23 +132,12 @@ class VoiceFollower:
         try:
             while True:
                 voice, text = await session.queue.get()
-                try:
-                    wav_bytes = await loop.run_in_executor(None, self._tts.synthesize, voice, text)
-                except Exception:
-                    logger.exception("TTS synthesis failed for message: %r", text)
-                    continue
-
-                if self._debug_dir:
-                    self._save_debug_clip(text, wav_bytes)
-
                 voice_client = guild.voice_client
                 if voice_client is None:
                     continue
 
                 try:
-                    with wave.open(io.BytesIO(wav_bytes)) as wav_file:
-                        expected_duration = wav_file.getnframes() / wav_file.getframerate()
-
+                    source = StreamingPCMSource()
                     done = asyncio.Event()
                     start_time = time.monotonic()
 
@@ -156,19 +145,14 @@ class VoiceFollower:
                         elapsed = time.monotonic() - start_time
                         if error:
                             logger.error("Playback error after %.2fs: %s", elapsed, error)
-                        elif elapsed < expected_duration - 0.5:
-                            logger.warning(
-                                "Playback for %r stopped early: expected %.2fs, played %.2fs",
-                                text, expected_duration, elapsed,
-                            )
                         else:
-                            logger.info("Played %r (%.2fs)", text, elapsed)
+                            logger.info("Played %r (%.2fs of audio in %.2fs)", text, source.fed_seconds, elapsed)
                         loop.call_soon_threadsafe(done.set)
 
-                    voice_client.play(
-                        discord.FFmpegPCMAudio(io.BytesIO(wav_bytes), pipe=True),
-                        after=_after_playback,
-                    )
+                    # Start playing right away: the source emits silence until
+                    # the first sentence arrives, then each one as it renders.
+                    voice_client.play(source, after=_after_playback)
+                    await loop.run_in_executor(None, self._render_into, source, voice, text)
                     await done.wait()
                 except Exception:
                     # A single message must never permanently kill this session's
@@ -176,6 +160,26 @@ class VoiceFollower:
                     logger.exception("Playback failed for message: %r", text)
         except asyncio.CancelledError:
             pass
+
+    def _render_into(self, source: StreamingPCMSource, voice: str, text: str) -> None:
+        """Runs in a worker thread: synthesizes `text` sentence by sentence
+        into `source`, always marking it finished so playback can end."""
+        start_time = time.monotonic()
+        chunks: list[np.ndarray] = []
+        sample_rate = 0
+        try:
+            for samples, sample_rate in self._tts.stream(voice, text):
+                if not chunks:
+                    logger.info("First audio for %r after %.0fms", text, (time.monotonic() - start_time) * 1000)
+                source.feed(samples, sample_rate)
+                chunks.append(samples)
+        except Exception:
+            logger.exception("TTS synthesis failed for message: %r", text)
+        finally:
+            source.finish()
+
+        if self._debug_dir and chunks:
+            self._save_debug_clip(text, to_wav(np.concatenate(chunks), sample_rate))
 
     def _save_debug_clip(self, text: str, wav_bytes: bytes) -> None:
         try:

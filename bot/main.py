@@ -22,8 +22,8 @@ def main() -> None:
 
     settings = SettingsStore(config.settings_path, config.tts_default_voice)
 
-    logger.info("Loading Kokoro model...")
-    tts = TTSCatalog(config.kokoro_model_dir)
+    logger.info("Loading Kokoro and Piper models...")
+    tts = TTSCatalog(config.kokoro_model_dir, config.piper_model_dir)
     follower = VoiceFollower(settings, tts, config.tts_max_chars, config.tts_debug_dir)
 
     intents = discord.Intents.default()

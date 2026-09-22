@@ -2,3 +2,5 @@ discord.py[voice]
 kokoro-onnx
 python-dotenv
 numpy
+piper-tts
+soxr

@@ -18,6 +18,7 @@ class Config:
     tts_debug_dir: str | None
     settings_path: str
     kokoro_model_dir: str
+    piper_model_dir: str
 
 
 def _require(name: str) -> str:
@@ -35,4 +36,5 @@ def load_config() -> Config:
         tts_debug_dir=os.environ.get("TTS_DEBUG_DIR") or None,
         settings_path=os.environ.get("SETTINGS_PATH", "data/guild_settings.json"),
         kokoro_model_dir=os.environ.get("KOKORO_MODEL_DIR", "models/kokoro"),
+        piper_model_dir=os.environ.get("PIPER_MODEL_DIR", "models/piper"),
     )
