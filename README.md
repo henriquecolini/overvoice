@@ -39,8 +39,16 @@ Fill in `DISCORD_BOT_TOKEN`. Everything else is optional (see below).
 docker compose up --build
 ```
 
-The first start downloads the Kokoro model weights into `./models`, so
-subsequent restarts start instantly and work offline.
+The first start downloads the Kokoro model weights into the `overvoice-models`
+volume, so subsequent restarts start instantly and work offline. Per-server
+settings persist in the `overvoice-data` volume.
+
+### Deploying on Coolify
+
+1. Create a new resource from this Git repository and choose the **Docker Compose** build pack (it picks up `docker-compose.yml`).
+2. Under **Environment Variables**, set `DISCORD_BOT_TOKEN` (the others are optional).
+3. Leave the domain empty — the bot serves no HTTP, it only makes outbound connections.
+4. Deploy. The named volumes keep the model weights and server settings across redeploys.
 
 ### 4. Configure per server
 
@@ -65,9 +73,9 @@ in it. Changes apply immediately — no restart needed.
 | `DISCORD_BOT_TOKEN` | — | Bot token from the Developer Portal |
 | `TTS_DEFAULT_VOICE` | `af_heart` | Voice for servers that haven't run `/overvoice voice` yet |
 | `TTS_MAX_CHARS` | `500` | Messages longer than this are truncated before being spoken |
-| `TTS_DEBUG_DIR` | unset | If set, saves every generated clip as a `.wav` file there (see `docker-compose.yml`'s `./debug-audio` mount) |
-| `SETTINGS_PATH` | `data/guild_settings.json` | Where per-server settings are persisted (see `docker-compose.yml`'s `./data` mount) |
-| `KOKORO_MODEL_DIR` | `models/kokoro` | Where Kokoro's model weights are downloaded to (see `docker-compose.yml`'s `./models` mount) |
+| `TTS_DEBUG_DIR` | unset | If set, saves every generated clip as a `.wav` file there (inside the container unless you mount a volume there) |
+| `SETTINGS_PATH` | `data/guild_settings.json` | Where per-server settings are persisted (the `overvoice-data` volume in Docker) |
+| `KOKORO_MODEL_DIR` | `models/kokoro` | Where Kokoro's model weights are downloaded to (the `overvoice-models` volume in Docker) |
 
 ## Local development (without Docker)
 

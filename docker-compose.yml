@@ -1,12 +1,22 @@
 services:
   overvoice:
     build: .
-    env_file: .env
+    # Variables are interpolated from the environment (or a local .env file),
+    # so the same file works with `docker compose up` and on Coolify, which
+    # lists these in its Environment Variables UI.
+    environment:
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:?}
+      TTS_DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-af_heart}
+      TTS_MAX_CHARS: ${TTS_MAX_CHARS:-500}
+      TTS_DEBUG_DIR: ${TTS_DEBUG_DIR:-}
     volumes:
-      - ./models:/app/models:Z
-      - ./debug-audio:/app/debug-audio:Z
-      - ./data:/app/data:Z
+      - overvoice-models:/app/models
+      - overvoice-data:/app/data
     restart: unless-stopped
     # Host networking avoids Docker's NAT/userland-proxy for the voice UDP
     # stream, which otherwise causes jitter/dropped packets mid-playback.
     network_mode: host
+
+volumes:
+  overvoice-models:
+  overvoice-data:
