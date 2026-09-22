@@ -138,27 +138,31 @@ class TTSCatalog:
             yield samples, sample_rate
 
     def _render_sentences(self, voice: str, text: str) -> Iterator[tuple[np.ndarray, int]]:
-        """Yields each sentence's audio with its surrounding silence trimmed."""
+        """Yields each sentence's audio with its surrounding silence trimmed.
+        Every line break ends a sentence, whatever punctuation precedes it."""
+        lines = [line for line in text.splitlines() if line.strip()]
         if voice in self._piper:
             piper_voice = self._piper[voice]
-            with self._phonemize_lock:
-                sentences = piper_voice.phonemize(text)
-            for phonemes in sentences:
-                if phonemes:
-                    audio = piper_voice.phoneme_ids_to_audio(piper_voice.phonemes_to_ids(phonemes))
-                    sample_rate = piper_voice.config.sample_rate
-                    yield _trim_silence(audio, sample_rate), sample_rate
+            sample_rate = piper_voice.config.sample_rate
+            for line in lines:
+                with self._phonemize_lock:
+                    sentences = piper_voice.phonemize(line)
+                for phonemes in sentences:
+                    if phonemes:
+                        audio = piper_voice.phoneme_ids_to_audio(piper_voice.phonemes_to_ids(phonemes))
+                        yield _trim_silence(audio, sample_rate), sample_rate
             return
 
         # kokoro-onnx only splits text past 510 phonemes -- about a whole
         # chat message -- so split by sentence here to stream at all.
         # (Kokoro trims each sentence's silence itself.)
         lang = language_for_voice(voice)
-        for sentence in split_sentences(text):
-            phonemes = self._kokoro_phonemes(sentence, lang)
-            if phonemes:
-                samples, sample_rate = self._kokoro.create(phonemes, voice=voice, is_phonemes=True)
-                yield samples.astype(np.float32), sample_rate
+        for line in lines:
+            for sentence in split_sentences(line):
+                phonemes = self._kokoro_phonemes(sentence, lang)
+                if phonemes:
+                    samples, sample_rate = self._kokoro.create(phonemes, voice=voice, is_phonemes=True)
+                    yield samples.astype(np.float32), sample_rate
 
     def synthesize(self, voice: str, text: str) -> bytes:
         """Blocking call: renders the whole text to 16-bit PCM WAV bytes."""

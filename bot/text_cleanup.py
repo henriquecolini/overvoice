@@ -12,9 +12,6 @@ _CHANNEL_MENTION = re.compile(r"<#(\d+)>")
 _CUSTOM_EMOJI = re.compile(r"<a?:(\w+):\d+>")
 _URL = re.compile(r"https?://\S+")
 _MARKDOWN_CHARS = re.compile(r"(\*\*|\*|__|_|~~|`{1,3}|\|\||^>\s?)", re.MULTILINE)
-# A line break is a sentence break (lists, one thought per line); turning
-# it into a period lets the TTS split there and start speaking sooner.
-_LINE_BREAK = re.compile(r"(?<![.!?…,;:])[ \t]*\n\s*")
 _WHITESPACE = re.compile(r"\s+")
 
 
@@ -28,8 +25,9 @@ def sanitize_message(message: discord.Message, max_chars: int) -> str:
     text = _CUSTOM_EMOJI.sub(lambda m: m.group(1), text)
     text = _URL.sub("", text)
     text = _MARKDOWN_CHARS.sub("", text)
-    text = _LINE_BREAK.sub(". ", text.strip())
-    text = _WHITESPACE.sub(" ", text).strip()
+    # Keep line breaks: the TTS treats every line as its own sentence.
+    lines = (_WHITESPACE.sub(" ", line).strip() for line in text.splitlines())
+    text = "\n".join(line for line in lines if line)
 
     return text[:max_chars]
 
